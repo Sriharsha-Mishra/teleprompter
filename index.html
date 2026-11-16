@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Prompter">
+<meta name="theme-color" content="#000000">
+<title>Prompter Remote</title>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
+<style>
+  :root {
+    --bg: #0b0b0c; --panel: #17171a; --line: #2a2a2f; --text: #f2f2f2; --muted: #9a9aa3;
+    --accent: #ffcc33; --good: #3ad07a; --bad: #ff5a5a;
+    --safe-t: env(safe-area-inset-top, 0px); --safe-b: env(safe-area-inset-bottom, 0px);
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  body { overscroll-behavior: none; }
+  button { font: inherit; color: inherit; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 12px; padding: 12px 16px; cursor: pointer; touch-action: manipulation; user-select: none; -webkit-user-select: none; }
+  button:active { transform: scale(0.97); }
+  button.primary { background: var(--accent); color: #111; border-color: var(--accent); font-weight: 700; }
+  input, textarea { font: inherit; color: var(--text); background: #101013; border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+  .view { display: none; min-height: 100%; }
+  .view.active { display: flex; }
+  .hidden { display: none !important; }
+
+  /* ---------- Home ---------- */
+  #home { flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 24px; text-align: center; }
+  #home h1 { margin: 0; font-size: 30px; }
+  #home p { margin: 0; color: var(--muted); max-width: 420px; line-height: 1.5; }
+  .choice { display: grid; gap: 14px; width: 100%; max-width: 420px; margin-top: 10px; }
+  .choice button { padding: 22px; text-align: left; }
+  .choice b { display: block; font-size: 20px; margin-bottom: 4px; }
+  .choice span { color: var(--muted); font-size: 14px; }
+
+  /* ---------- Prompter setup ---------- */
+  #setup { flex-direction: column; gap: 14px; padding: calc(16px + var(--safe-t)) 16px calc(16px + var(--safe-b)); max-width: 900px; margin: 0 auto; width: 100%; }
+  #setup .top { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  #setup h2 { margin: 0; }
+  #scriptBox { width: 100%; min-height: 45vh; resize: vertical; line-height: 1.5; }
+  .pairCard { display: flex; gap: 18px; align-items: center; background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 16px; }
+  .pairCard .qr { background: #fff; padding: 8px; border-radius: 10px; line-height: 0; }
+  .pairCard .qr img { width: 132px; height: 132px; image-rendering: pixelated; }
+  .code { font-size: 40px; font-weight: 800; letter-spacing: 6px; color: var(--accent); }
+  .status { font-size: 14px; color: var(--muted); }
+  .status.ok { color: var(--good); } .status.err { color: var(--bad); }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+
+  /* ---------- Prompter stage ---------- */
+  #stage { position: fixed; inset: 0; background: #000; overflow: hidden; flex-direction: column; }
+  #flip { position: absolute; inset: 0; }
+  #scroller { position: absolute; left: 0; right: 0; top: 0; will-change: transform; }
+  #scriptText { margin: 0 auto; padding: 0 6%; color: #fff; line-height: 1.35; font-weight: 600; }
+  #scriptText p { margin: 0 0 0.9em; white-space: pre-wrap; }
+  #scriptText p.cur { color: #fff; }
+  #scriptText .endPad { height: 100vh; }
+  #guide { position: absolute; left: 0; right: 0; height: 0; border-top: 2px solid rgba(255,204,51,.55); pointer-events: none; }
+  #guide::before, #guide::after { content: ""; position: absolute; top: -9px; border: 8px solid transparent; }
+  #guide::before { left: 0; border-left-color: var(--accent); }
+  #guide::after { right: 0; border-right-color: var(--accent); }
+  #stageHud { position: absolute; top: calc(8px + var(--safe-t)); right: 10px; display: flex; gap: 8px; align-items: center; opacity: .35; transition: opacity .3s; z-index: 5; }
+  #stageHud:hover, #stageHud.show { opacity: 1; }
+  #stageHud button { padding: 8px 12px; font-size: 14px; background: rgba(30,30,30,.85); }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--bad); display: inline-block; }
+  .dot.on { background: var(--good); }
+  #countdown { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 28vh; font-weight: 800; color: var(--accent); pointer-events: none; z-index: 4; }
+
+  /* ---------- Remote ---------- */
+  #remote { flex-direction: column; padding: calc(10px + var(--safe-t)) 14px calc(14px + var(--safe-b)); gap: 12px; height: 100%; }
+  #connectPane { flex-direction: column; gap: 14px; align-items: stretch; max-width: 420px; margin: auto; width: 100%; text-align: center; }
+  #codeInput { font-size: 34px; text-align: center; letter-spacing: 8px; }
+  #controlPane { display: flex; flex-direction: column; gap: 12px; height: 100%; min-height: 0; }
+  .rtop { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .rtop .status { display: flex; align-items: center; gap: 6px; }
+  #playBtn { font-size: 26px; padding: 22px; font-weight: 800; }
+  #playBtn.playing { background: var(--bad); border-color: var(--bad); color: #fff; }
+  .speedRow { display: grid; grid-template-columns: 64px 1fr 64px; gap: 10px; align-items: center; }
+  .speedRow button { font-size: 26px; padding: 10px 0; font-weight: 700; }
+  .speedVal { text-align: center; }
+  .speedVal b { font-size: 34px; display: block; }
+  .speedVal span { color: var(--muted); font-size: 12px; }
+  input[type=range] { width: 100%; padding: 0; accent-color: var(--accent); background: none; border: none; height: 34px; }
+  .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .grid3 button { padding: 12px 4px; font-size: 14px; }
+  .tabs { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+  .tabs button { padding: 9px 4px; font-size: 14px; }
+  .tabs button.on { background: #2b2b31; border-color: var(--accent); }
+  .tabBody { flex: 1; min-height: 160px; display: flex; flex-direction: column; }
+  #pad { flex: 1; border: 1px dashed #444; border-radius: 16px; display: flex; align-items: center; justify-content: center; color: var(--muted);
+    text-align: center; padding: 12px; touch-action: none; user-select: none; -webkit-user-select: none; background: repeating-linear-gradient(0deg, #111 0 22px, #141418 22px 44px); }
+  #outline { flex: 1; overflow-y: auto; border: 1px solid var(--line); border-radius: 14px; -webkit-overflow-scrolling: touch; }
+  #outline div { padding: 12px 14px; border-bottom: 1px solid var(--line); font-size: 15px; line-height: 1.35; color: #cfcfd6; cursor: pointer; }
+  #outline div.cur { background: #2a2614; color: #fff; border-left: 4px solid var(--accent); }
+  #outline div .n { color: var(--muted); font-size: 12px; margin-right: 6px; }
+  #remoteScript { flex: 1; min-height: 150px; resize: none; }
+  .progress { height: 6px; background: #222; border-radius: 3px; overflow: hidden; }
+  .progress i { display: block; height: 100%; width: 0; background: var(--accent); }
+  .small { font-size: 13px; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<!-- ============ HOME ============ -->
+<section id="home" class="view active">
+  <h1>📜 Prompter Remote</h1>
+  <p>Open this page on the screen you read from and on your phone. Pair them once, then run the script from your phone.</p>
+  <div class="choice">
+    <button id="goPrompter"><b>🖥️ This is the Prompter</b><span>iPad, tablet or laptop near the camera. Shows the script.</span></button>
+    <button id="goRemote"><b>📱 This is the Remote</b><span>Your phone. Play, pause, change speed, jump to any line.</span></button>
+  </div>
+</section>
+
+<!-- ============ PROMPTER: SETUP ============ -->
+<section id="setup" class="view">
+  <div class="top">
+    <h2>Script</h2>
+    <div class="row">
+      <button id="backHome1">← Back</button>
+      <button id="startBtn" class="primary">Start Prompter ▶</button>
+    </div>
+  </div>
+  <div class="pairCard">
+    <div class="qr" id="qrBox"></div>
+    <div>
+      <div class="small">Pairing code: scan the QR with your phone camera, or enter the code in Remote mode</div>
+      <div class="code" id="codeShow">······</div>
+      <div class="status" id="setupStatus">Connecting…</div>
+    </div>
+  </div>
+  <textarea id="scriptBox" placeholder="Paste your script here. Blank lines separate paragraphs.&#10;&#10;You can also paste it on your phone in Remote → Script and send it here."></textarea>
+  <div class="small">Script is saved on this device automatically. Keyboard: Space = play/pause, ↑/↓ = speed, PageUp/PageDown or ←/→ = nudge (works with Bluetooth page-turners), M = mirror, Esc = back to editor.</div>
+</section>
+
+<!-- ============ PROMPTER: STAGE ============ -->
+<section id="stage" class="view">
+  <div id="flip">
+    <div id="scroller"><div id="scriptText"></div></div>
+  </div>
+  <div id="guide"></div>
+  <div id="countdown" class="hidden"></div>
+  <div id="stageHud">
+    <span class="dot" id="stageDot"></span>
+    <span class="small" id="stageCode"></span>
+    <button id="hudPlay">▶</button>
+    <button id="hudFs">⛶</button>
+    <button id="hudExit">✎ Edit</button>
+  </div>
+</section>
+
+<!-- ============ REMOTE ============ -->
+<section id="remote" class="view">
+  <div id="connectPane" style="display:flex">
+    <h2 style="margin:0">Connect to Prompter</h2>
+    <p class="small" style="margin:0">Enter the 6-digit code on the prompter screen.</p>
+    <input id="codeInput" inputmode="numeric" pattern="[0-9]*" maxlength="6" placeholder="000000" autocomplete="off">
+    <button id="connectBtn" class="primary">Connect</button>
+    <div class="status" id="remoteStatus"></div>
+    <button id="backHome2">← Back</button>
+  </div>
+
+  <div id="controlPane" class="hidden">
+    <div class="rtop">
+      <div class="status"><span class="dot" id="remoteDot"></span><span id="remoteConnText">Connected</span></div>
+      <button id="disconnectBtn" style="padding:8px 12px;font-size:14px">Disconnect</button>
+    </div>
+    <div class="progress"><i id="progBar"></i></div>
+
+    <button id="playBtn">▶ PLAY</button>
+
+    <div class="speedRow">
+      <button id="slowerBtn">−</button>
+      <div class="speedVal"><b id="speedShow">5</b><span>SPEED</span></div>
+      <button id="fasterBtn">+</button>
+    </div>
+    <input type="range" id="speedRange" min="1" max="30" step="1" value="5">
+
+    <div class="grid3">
+      <button id="topBtn">⤒ Top</button>
+      <button id="backBtn">↑ Back a bit</button>
+      <button id="fwdBtn">↓ Ahead</button>
+      <button id="fontDown">A− Text</button>
+      <button id="mirrorBtn">⇋ Mirror</button>
+      <button id="fontUp">A+ Text</button>
+    </div>
+
+    <div class="tabs">
+      <button data-tab="pad" class="on">✋ Drag scroll</button>
+      <button data-tab="outline">☰ Jump to line</button>
+      <button data-tab="edit">✎ Script</button>
+    </div>
+    <div class="tabBody" id="tab-pad">
+      <div id="pad">Drag up / down here<br>to scroll the script by hand</div>
+    </div>
+    <div class="tabBody hidden" id="tab-outline">
+      <div id="outline"></div>
+    </div>
+    <div class="tabBody hidden" id="tab-edit" style="gap:8px">
+      <textarea id="remoteScript" placeholder="Paste a script here and send it to the prompter"></textarea>
+      <button id="sendScriptBtn" class="primary">Send script to prompter</button>
+    </div>
+  </div>
+</section>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const PREFIX = "tprompt-remote-v1-";
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem(PREFIX + k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+    set(k, v) { try { localStorage.setItem(PREFIX + k, JSON.stringify(v)); } catch {} }
+  };
+  const SAMPLE = "Welcome to Prompter Remote!\n\nPaste your own script on this screen, or send one from your phone.\n\nOn your phone, open this same page, tap “This is the Remote”, and scan the QR code or type the 6-digit code.\n\nThen you can play, pause, change speed, drag to scroll by hand, or tap any paragraph to jump straight to it.\n\nThe yellow line marks where to read. Keep your eyes there and let the text come to you.\n\nGood luck with the video!";
+
+  function show(id) {
+    document.querySelectorAll(".view").forEach(v => v.classList.remove("active"));
+    $(id).classList.add("active");
+  }
+  function paragraphs(text) {
+    return text.replace(/\r/g, "").split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
+  }
+  function hasPeer() { return typeof window.Peer === "function"; }
+
+  /* =================================================================
+     PROMPTER (display side)
+     ================================================================= */
+  const P = {
+    peer: null, conns: new Set(), code: null,
+    script: store.get("script", SAMPLE),
+    speed: store.get("speed", 5), font: store.get("font", 56),
+    mirror: store.get("mirror", false), guidePct: 0.33,
+    pos: 0, playing: false, last: 0, curPara: -1, paraEls: [], maxPos: 0,
+    wake: null, started: false
+  };
+
+  function prompterInit() {
+    show("setup");
+    $("scriptBox").value = P.script;
+    if (!P.started) { P.started = true; startPeerHost(); requestAnimationFrame(tick); }
+  }
+
+  function newCode() { return String(Math.floor(100000 + Math.random() * 900000)); }
+
+  function setHostStatus(text, cls) {
+    const s = $("setupStatus"); s.textContent = text; s.className = "status " + (cls || "");
+    const on = P.conns.size > 0;
+    $("stageDot").classList.toggle("on", on);
+  }
+
+  function startPeerHost(forceNew) {
+    if (!hasPeer()) { setHostStatus("Could not load the connection library. Check the internet connection and reload.", "err"); return; }
+    P.code = (!forceNew && store.get("code", null)) || newCode();
+    store.set("code", P.code);
+    renderPairInfo();
+    if (P.peer) { try { P.peer.destroy(); } catch {} }
+    const peer = new Peer("tpr-" + P.code, { debug: 0 });
+    P.peer = peer;
+    peer.on("open", () => setHostStatus(P.conns.size ? "Remote connected ✓" : "Ready, waiting for remote…", P.conns.size ? "ok" : ""));
+    peer.on("connection", (conn) => {
+      conn.on("open", () => {
+        P.conns.add(conn);
+        setHostStatus("Remote connected ✓", "ok");
+        sendTo(conn, { t: "script", text: P.script });
+        sendState(true);
+      });
+      conn.on("data", (msg) => handleCmd(msg));
+      const drop = () => { P.conns.delete(conn); setHostStatus(P.conns.size ? "Remote connected ✓" : "Remote disconnected, waiting…", P.conns.size ? "ok" : ""); };
+      conn.on("close", drop); conn.on("error", drop);
+    });
+    peer.on("disconnected", () => { setHostStatus("Reconnecting…"); setTimeout(() => { try { peer.reconnect(); } catch {} }, 1500); });
+    peer.on("error", (e) => {
+      if (e && e.type === "unavailable-id") { startPeerHost(true); return; } // code taken: pick another
+      if (e && (e.type === "network" || e.type === "server-error" || e.type === "socket-error")) {
+        setHostStatus("Connection problem, retrying…", "err");
+        setTimeout(() => { if (P.peer === peer && peer.disconnected && !peer.destroyed) { try { peer.reconnect(); } catch { startPeerHost(); } } }, 3000);
+        return;
+      }
+      setHostStatus("Error: " + (e && e.type || e), "err");
+    });
+  }
+
+  function remoteUrl() { return location.origin + location.pathname + "#remote-" + P.code; }
+  function renderPairInfo() {
+    $("codeShow").textContent = P.code;
+    $("stageCode").textContent = P.code;
+    const box = $("qrBox"); box.innerHTML = "";
+    if (typeof window.qrcode === "function" && location.protocol.startsWith("http")) {
+      try { const q = qrcode(0, "M"); q.addData(remoteUrl()); q.make(); box.innerHTML = q.createImgTag(4, 0); }
+      catch { box.classList.add("hidden"); }
+    } else box.classList.add("hidden");
+  }
+
+  function sendTo(conn, msg) { try { if (conn.open) conn.send(msg); } catch {} }
+  function broadcast(msg) { P.conns.forEach(c => sendTo(c, msg)); }
+  let lastStateSent = 0;
+  function sendState(force) {
+    const now = performance.now();
+    if (!force && now - lastStateSent < 200) return;
+    lastStateSent = now;
+    broadcast({ t: "state", playing: P.playing, speed: P.speed, font: P.font, mirror: P.mirror,
+      para: P.curPara, progress: P.maxPos ? Math.min(1, P.pos / P.maxPos) : 0 });
+  }
+
+  function handleCmd(m) {
+    if (!m || typeof m !== "object") return;
+    switch (m.t) {
+      case "play": setPlaying(true); break;
+      case "pause": setPlaying(false); break;
+      case "toggle": setPlaying(!P.playing); break;
+      case "speed": setSpeed(m.v); break;
+      case "font": setFont(m.v); break;
+      case "mirror": P.mirror = !!m.v; store.set("mirror", P.mirror); applyLayout(); break;
+      case "nudge": P.pos += Number(m.dy) || 0; clampPos(); break;
+      case "top": P.pos = 0; setPlaying(false); break;
+      case "jump": jumpToPara(Number(m.i)); break;
+      case "script":
+        if (typeof m.text === "string") {
+          P.script = m.text; store.set("script", P.script); $("scriptBox").value = P.script;
+          renderScript(); P.pos = 0; setPlaying(false); broadcast({ t: "script", text: P.script });
+        }
+        break;
+      case "hello": sendState(true); break;
+    }
+    sendState(true);
+  }
+
+  function setPlaying(v) {
+    if (v && !$("stage").classList.contains("active")) enterStage();
+    P.playing = !!v;
+    $("hudPlay").textContent = P.playing ? "❚❚" : "▶";
+    if (P.playing) keepAwake();
+  }
+  function setSpeed(v) { P.speed = Math.max(1, Math.min(30, Math.round(Number(v) || 1))); store.set("speed", P.speed); }
+  function setFont(v) { P.font = Math.max(24, Math.min(160, Math.round(Number(v) || 56))); store.set("font", P.font); applyLayout(true); }
+
+  function renderScript() {
+    const wrap = $("scriptText"); wrap.innerHTML = "";
+    P.paraEls = paragraphs(P.script).map(t => { const p = document.createElement("p"); p.textContent = t; wrap.appendChild(p); return p; });
+    const pad = document.createElement("div"); pad.className = "endPad"; wrap.appendChild(pad);
+    applyLayout();
+  }
+
+  function applyLayout(keepPara) {
+    // keep the same paragraph under the guide line when the font changes
+    const anchor = keepPara ? currentParaIndex() : -1;
+    $("scriptText").style.fontSize = P.font + "px";
+    $("flip").style.transform = P.mirror ? "scaleX(-1)" : "";
+    const h = window.innerHeight;
+    $("guide").style.top = Math.round(h * P.guidePct) + "px";
+    $("scroller").style.paddingTop = Math.round(h * P.guidePct + P.font * 0.25) + "px";
+    P.maxPos = Math.max(0, $("scroller").scrollHeight - h * P.guidePct - h); // endPad = 100vh
+    if (anchor >= 0) jumpToPara(anchor); else clampPos();
+  }
+
+  function clampPos() { P.pos = Math.max(0, Math.min(P.pos, P.maxPos || 0)); }
+  function jumpToPara(i) {
+    const el = P.paraEls[i]; if (!el) return;
+    P.pos = el.offsetTop - $("scriptText").offsetTop; clampPos();
+  }
+  function currentParaIndex() {
+    // paragraph whose block contains the guide line
+    let idx = 0;
+    for (let i = 0; i < P.paraEls.length; i++) {
+      if (P.paraEls[i].offsetTop - $("scriptText").offsetTop <= P.pos + 2) idx = i; else break;
+    }
+    return idx;
+  }
+
+  function tick(ts) {
+    const dt = P.last ? Math.min(0.1, (ts - P.last) / 1000) : 0;
+    P.last = ts;
+    if ($("stage").classList.contains("active")) {
+      if (P.playing && $("countdown").classList.contains("hidden")) {
+        // speed 1..30 → pixels/sec, scaled a little with font size
+        P.pos += P.speed * 9 * (P.font / 56) * dt;
+        if (P.pos >= P.maxPos) { P.pos = P.maxPos; setPlaying(false); sendState(true); }
+      }
+      $("scroller").style.transform = "translate3d(0," + (-P.pos).toFixed(1) + "px,0)";
+      const ci = currentParaIndex();
+      if (ci !== P.curPara) { P.curPara = ci; sendState(true); }
+      sendState(false);
+    }
+    requestAnimationFrame(tick);
+  }
+
+  function enterStage() {
+    P.script = $("scriptBox").value.trim() ? $("scriptBox").value : SAMPLE;
+    store.set("script", P.script);
+    show("stage");
+    renderScript();
+    broadcast({ t: "script", text: P.script });
+    keepAwake();
+    sendState(true);
+  }
+  function exitStage() {
+    setPlaying(false);
+    try { if (document.fullscreenElement) document.exitFullscreen(); } catch {}
+    show("setup");
+  }
+
+  async function keepAwake() {
+    try { if ("wakeLock" in navigator && !P.wake) { P.wake = await navigator.wakeLock.request("screen"); P.wake.addEventListener("release", () => P.wake = null); } } catch {}
+  }
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && $("stage").classList.contains("active")) keepAwake(); });
+
+  $("startBtn").onclick = enterStage;
+  $("hudExit").onclick = exitStage;
+  $("hudPlay").onclick = () => { setPlaying(!P.playing); sendState(true); };
+  $("hudFs").onclick = () => { const el = document.documentElement; try { if (!document.fullscreenElement) (el.requestFullscreen || el.webkitRequestFullscreen).call(el); else document.exitFullscreen(); } catch {} };
+  $("scriptBox").addEventListener("input", () => store.set("script", $("scriptBox").value));
+  window.addEventListener("resize", () => { if ($("stage").classList.contains("active")) applyLayout(true); });
+
+  // Tap stage to reveal HUD; touch-drag on the stage itself also scrolls
+  let hudTimer, dragY = null;
+  $("stage").addEventListener("pointerdown", (e) => {
+    $("stageHud").classList.add("show"); clearTimeout(hudTimer);
+    hudTimer = setTimeout(() => $("stageHud").classList.remove("show"), 3000);
+    if (!e.target.closest("#stageHud")) dragY = e.clientY;
+  });
+  window.addEventListener("pointermove", (e) => { if (dragY !== null) { P.pos -= (e.clientY - dragY); dragY = e.clientY; clampPos(); } });
+  window.addEventListener("pointerup", () => dragY = null);
+  $("stage").addEventListener("wheel", (e) => { P.pos += e.deltaY; clampPos(); e.preventDefault(); }, { passive: false });
+
+  document.addEventListener("keydown", (e) => {
+    if (!$("stage").classList.contains("active")) return;
+    const k = e.key;
+    if (k === " " || k === "Enter") { setPlaying(!P.playing); }
+    else if (k === "ArrowUp") setSpeed(P.speed + 1);
+    else if (k === "ArrowDown") setSpeed(P.speed - 1);
+    else if (k === "PageDown" || k === "ArrowRight") { P.pos += window.innerHeight * 0.25; clampPos(); }
+    else if (k === "PageUp" || k === "ArrowLeft") { P.pos -= window.innerHeight * 0.25; clampPos(); }
+    else if (k === "m" || k === "M") { P.mirror = !P.mirror; store.set("mirror", P.mirror); applyLayout(); }
+    else if (k === "Escape") exitStage();
+    else return;
+    e.preventDefault(); sendState(true);
+  });
+
+  /* =================================================================
+     REMOTE (phone side)
+     ================================================================= */
+  const R = { peer: null, conn: null, code: null, state: {}, script: "", manualClose: false, retry: 0 };
+
+  function remoteInit(code) {
+    show("remote");
+    const saved = code || store.get("lastCode", "");
+    $("codeInput").value = saved;
+    if (code) connectRemote(code);
+  }
+
+  function setRemoteStatus(text, cls) { const s = $("remoteStatus"); s.textContent = text; s.className = "status " + (cls || ""); }
+
+  function connectRemote(code) {
+    code = String(code || "").replace(/\D/g, "");
+    if (code.length !== 6) { setRemoteStatus("Enter the 6-digit code.", "err"); return; }
+    if (!hasPeer()) { setRemoteStatus("Could not load the connection library. Check the internet connection and reload.", "err"); return; }
+    R.code = code; store.set("lastCode", code); R.manualClose = false;
+    setRemoteStatus("Connecting…");
+    const open = () => {
+      if (R.conn) { try { R.conn.close(); } catch {} }
+      const conn = R.peer.connect("tpr-" + code, { reliable: true });
+      R.conn = conn;
+      const timeout = setTimeout(() => { if (!conn.open) { setRemoteStatus("Can't reach the prompter. Is it open and showing this code?", "err"); scheduleRetry(); } }, 8000);
+      conn.on("open", () => {
+        clearTimeout(timeout); R.retry = 0;
+        $("connectPane").style.display = "none"; $("controlPane").classList.remove("hidden");
+        $("remoteDot").classList.add("on"); $("remoteConnText").textContent = "Connected · " + code;
+        send({ t: "hello" });
+      });
+      conn.on("data", onRemoteData);
+      conn.on("close", () => { $("remoteDot").classList.remove("on"); $("remoteConnText").textContent = "Reconnecting…"; scheduleRetry(); });
+      conn.on("error", () => scheduleRetry());
+    };
+    if (R.peer && !R.peer.destroyed && R.peer.open) { open(); return; }
+    if (R.peer) { try { R.peer.destroy(); } catch {} }
+    R.peer = new Peer({ debug: 0 });
+    R.peer.on("open", open);
+    R.peer.on("error", (e) => {
+      if (e && e.type === "peer-unavailable") setRemoteStatus("No prompter found with that code. Check the number on the prompter screen.", "err");
+      else setRemoteStatus("Connection problem (" + (e && e.type || "unknown") + "). Retrying…", "err");
+      scheduleRetry();
+    });
+    R.peer.on("disconnected", () => { try { R.peer.reconnect(); } catch {} });
+  }
+
+  let retryTimer = null;
+  function scheduleRetry() {
+    if (R.manualClose || retryTimer) return;
+    R.retry++;
+    const wait = Math.min(10000, 1000 * R.retry);
+    retryTimer = setTimeout(() => { retryTimer = null; if (!R.manualClose && !(R.conn && R.conn.open)) connectRemote(R.code); }, wait);
+  }
+
+  function send(msg) { try { if (R.conn && R.conn.open) R.conn.send(msg); } catch {} }
+
+  function onRemoteData(m) {
+    if (!m || typeof m !== "object") return;
+    if (m.t === "script") { R.script = m.text || ""; renderOutline(); if (!$("remoteScript").value) $("remoteScript").value = R.script; }
+    if (m.t === "state") {
+      R.state = m;
+      $("playBtn").textContent = m.playing ? "❚❚ PAUSE" : "▶ PLAY";
+      $("playBtn").classList.toggle("playing", !!m.playing);
+      if (document.activeElement !== $("speedRange")) $("speedRange").value = m.speed;
+      $("speedShow").textContent = m.speed;
+      $("mirrorBtn").classList.toggle("primary", !!m.mirror);
+      $("progBar").style.width = Math.round((m.progress || 0) * 100) + "%";
+      markOutline(m.para);
+    }
+  }
+
+  function renderOutline() {
+    const box = $("outline"); box.innerHTML = "";
+    paragraphs(R.script).forEach((t, i) => {
+      const d = document.createElement("div");
+      const n = document.createElement("span"); n.className = "n"; n.textContent = (i + 1) + ".";
+      d.appendChild(n); d.appendChild(document.createTextNode(t.length > 160 ? t.slice(0, 160) + "…" : t));
+      d.onclick = () => send({ t: "jump", i });
+      box.appendChild(d);
+    });
+    markOutline(R.state.para);
+  }
+  let lastMarked = -1;
+  function markOutline(i) {
+    if (i === lastMarked) return; lastMarked = i;
+    const kids = $("outline").children;
+    for (let k = 0; k < kids.length; k++) kids[k].classList.toggle("cur", k === i);
+    const el = kids[i];
+    if (el && !$("tab-outline").classList.contains("hidden")) el.scrollIntoView({ block: "center", behavior: "smooth" });
+  }
+
+  // buttons
+  $("connectBtn").onclick = () => connectRemote($("codeInput").value);
+  $("codeInput").addEventListener("keydown", (e) => { if (e.key === "Enter") connectRemote($("codeInput").value); });
+  $("codeInput").addEventListener("input", (e) => { const v = e.target.value.replace(/\D/g, "").slice(0, 6); e.target.value = v; if (v.length === 6) connectRemote(v); });
+  $("disconnectBtn").onclick = () => {
+    R.manualClose = true; clearTimeout(retryTimer); retryTimer = null;
+    try { R.conn && R.conn.close(); } catch {}
+    $("controlPane").classList.add("hidden"); $("connectPane").style.display = "flex"; setRemoteStatus("");
+  };
+  $("playBtn").onclick = () => send({ t: "toggle" });
+  const curSpeed = () => Number(R.state.speed || $("speedRange").value || 5);
+  $("slowerBtn").onclick = () => send({ t: "speed", v: curSpeed() - 1 });
+  $("fasterBtn").onclick = () => send({ t: "speed", v: curSpeed() + 1 });
+  $("speedRange").oninput = (e) => { $("speedShow").textContent = e.target.value; send({ t: "speed", v: e.target.value }); };
+  $("topBtn").onclick = () => send({ t: "top" });
+  $("backBtn").onclick = () => send({ t: "nudge", dy: -220 });
+  $("fwdBtn").onclick = () => send({ t: "nudge", dy: 220 });
+  $("fontUp").onclick = () => send({ t: "font", v: (R.state.font || 56) + 6 });
+  $("fontDown").onclick = () => send({ t: "font", v: (R.state.font || 56) - 6 });
+  $("mirrorBtn").onclick = () => send({ t: "mirror", v: !R.state.mirror });
+  $("sendScriptBtn").onclick = () => {
+    const text = $("remoteScript").value;
+    if (!text.trim()) return;
+    send({ t: "script", text });
+    $("sendScriptBtn").textContent = "Sent ✓"; setTimeout(() => $("sendScriptBtn").textContent = "Send script to prompter", 1500);
+  };
+  document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => {
+    document.querySelectorAll(".tabs button").forEach(x => x.classList.toggle("on", x === b));
+    ["pad", "outline", "edit"].forEach(t => $("tab-" + t).classList.toggle("hidden", t !== b.dataset.tab));
+    if (b.dataset.tab === "outline") { lastMarked = -1; markOutline(R.state.para); }
+  });
+
+  // Drag pad: finger movement → scroll on the prompter (batched per frame)
+  let padY = null, pendingDy = 0, padRaf = 0;
+  const flushPad = () => { padRaf = 0; if (pendingDy) { send({ t: "nudge", dy: pendingDy }); pendingDy = 0; } };
+  $("pad").addEventListener("pointerdown", (e) => { padY = e.clientY; $("pad").setPointerCapture(e.pointerId); });
+  $("pad").addEventListener("pointermove", (e) => {
+    if (padY === null) return;
+    pendingDy += (padY - e.clientY) * 2.5; // drag up = read ahead
+    padY = e.clientY;
+    if (!padRaf) padRaf = requestAnimationFrame(flushPad);
+  });
+  const endPad = () => { padY = null; };
+  $("pad").addEventListener("pointerup", endPad); $("pad").addEventListener("pointercancel", endPad);
+
+  /* =================================================================
+     ROUTING
+     ================================================================= */
+  $("goPrompter").onclick = () => { store.set("role", "prompter"); prompterInit(); };
+  $("goRemote").onclick = () => { store.set("role", "remote"); remoteInit(); };
+  $("backHome1").onclick = () => show("home");
+  $("backHome2").onclick = () => show("home");
+
+  const m = location.hash.match(/^#remote-(\d{6})$/);
+  if (m) { history.replaceState(null, "", location.pathname); remoteInit(m[1]); }
+})();
+</script>
+</body>
+</html>
